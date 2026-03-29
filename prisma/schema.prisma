@@ -1,0 +1,297 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum AdminUserStatus {
+  active
+  disabled
+}
+
+enum ScenarioTemplateStatus {
+  active
+  inactive
+}
+
+enum ScenarioVersionStatus {
+  draft
+  published
+  archived
+}
+
+enum ServiceLinkStatus {
+  created
+  opened
+  in_progress
+  submitted
+  generating_report
+  completed
+  expired
+  revoked
+  failed
+}
+
+enum FlowSessionStatus {
+  active
+  submitted
+  closed
+  abandoned
+}
+
+enum AiRunStatus {
+  success
+  failed
+}
+
+enum ReportStatus {
+  ready
+  failed
+}
+
+model AdminUser {
+  id            BigInt          @id @default(autoincrement())
+  email         String          @unique @db.VarChar(255)
+  passwordHash  String          @map("password_hash") @db.VarChar(255)
+  displayName   String          @map("display_name") @db.VarChar(100)
+  status        AdminUserStatus @default(active)
+  lastLoginAt   DateTime?       @map("last_login_at") @db.Timestamptz(6)
+  createdAt     DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  roles             AdminUserRole[]
+  createdScenarios  ScenarioTemplate[] @relation("ScenarioCreatedBy")
+  createdVersions   ScenarioVersion[]  @relation("VersionCreatedBy")
+  publishedVersions ScenarioVersion[]  @relation("VersionPublishedBy")
+  createdLinks      ServiceLink[]      @relation("LinkCreatedBy")
+
+  @@map("admin_users")
+}
+
+model Role {
+  id        BigInt          @id @default(autoincrement())
+  code      String          @unique @db.VarChar(50)
+  name      String          @db.VarChar(100)
+  createdAt DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  users     AdminUserRole[]
+
+  @@map("roles")
+}
+
+model AdminUserRole {
+  id          BigInt    @id @default(autoincrement())
+  adminUserId BigInt    @map("admin_user_id")
+  roleId      BigInt    @map("role_id")
+  adminUser   AdminUser @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+  role        Role      @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([adminUserId, roleId])
+  @@map("admin_user_roles")
+}
+
+model ScenarioTemplate {
+  id          BigInt                 @id @default(autoincrement())
+  code        String                 @unique @db.VarChar(100)
+  name        String                 @db.VarChar(200)
+  description String?
+  riskLevel   String                 @default("low") @map("risk_level") @db.VarChar(20)
+  status      ScenarioTemplateStatus @default(active)
+  createdById BigInt?                @map("created_by")
+  createdBy   AdminUser?             @relation("ScenarioCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  versions ScenarioVersion[]
+  links    ServiceLink[]
+
+  @@map("scenario_templates")
+}
+
+model ScenarioVersion {
+  id                   BigInt                @id @default(autoincrement())
+  scenarioTemplateId   BigInt                @map("scenario_template_id")
+  scenarioTemplate     ScenarioTemplate      @relation(fields: [scenarioTemplateId], references: [id], onDelete: Cascade)
+  versionNo            Int                   @map("version_no")
+  status               ScenarioVersionStatus @default(draft)
+  title                String                @db.VarChar(200)
+  description          String?
+  compiledRuntimeJsonb Json                  @map("compiled_runtime_jsonb")
+  configChecksum       String?               @map("config_checksum") @db.VarChar(128)
+  publishedById        BigInt?               @map("published_by")
+  publishedBy          AdminUser?            @relation("VersionPublishedBy", fields: [publishedById], references: [id])
+  publishedAt          DateTime?             @map("published_at") @db.Timestamptz(6)
+  createdById          BigInt?               @map("created_by")
+  createdBy            AdminUser?            @relation("VersionCreatedBy", fields: [createdById], references: [id])
+  createdAt            DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  links ServiceLink[]
+
+  @@unique([scenarioTemplateId, versionNo])
+  @@map("scenario_versions")
+}
+
+model ServiceLink {
+  id                 BigInt             @id @default(autoincrement())
+  linkCode           String             @unique @map("link_code") @db.VarChar(64)
+  tokenHash          String             @unique @map("token_hash") @db.VarChar(255)
+  scenarioTemplateId BigInt             @map("scenario_template_id")
+  scenarioTemplate   ScenarioTemplate   @relation(fields: [scenarioTemplateId], references: [id])
+  scenarioVersionId  BigInt             @map("scenario_version_id")
+  scenarioVersion    ScenarioVersion    @relation(fields: [scenarioVersionId], references: [id])
+  status             ServiceLinkStatus  @default(created)
+
+  externalPlatform   String?            @map("external_platform") @db.VarChar(50)
+  externalOrderNo    String?            @map("external_order_no") @db.VarChar(100)
+  externalBuyerRef   String?            @map("external_buyer_ref") @db.VarChar(100)
+
+  recipientName      String?            @map("recipient_name") @db.VarChar(100)
+  recipientContact   String?            @map("recipient_contact") @db.VarChar(255)
+  internalNote       String?            @map("internal_note")
+
+  currentStepKey     String?            @map("current_step_key") @db.VarChar(100)
+  progressPercent    Decimal            @default(0) @map("progress_percent") @db.Decimal(5, 2)
+
+  openedAt           DateTime?          @map("opened_at") @db.Timestamptz(6)
+  lastActiveAt       DateTime?          @map("last_active_at") @db.Timestamptz(6)
+  submittedAt        DateTime?          @map("submitted_at") @db.Timestamptz(6)
+  completedAt        DateTime?          @map("completed_at") @db.Timestamptz(6)
+  invalidatedAt      DateTime?          @map("invalidated_at") @db.Timestamptz(6)
+  expiresAt          DateTime?          @map("expires_at") @db.Timestamptz(6)
+
+  reportId           BigInt?            @map("report_id")
+  createdById        BigInt?            @map("created_by")
+  createdBy          AdminUser?         @relation("LinkCreatedBy", fields: [createdById], references: [id])
+  createdAt          DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  flowSessions       FlowSession[]
+  stepResponses      StepResponse[]
+  aiRuns             AiRun[]
+  reports            Report[]
+  linkEvents         LinkEvent[]
+
+  @@index([status], map: "idx_service_links_status")
+  @@index([scenarioVersionId], map: "idx_service_links_scenario_version_id")
+  @@index([externalOrderNo], map: "idx_service_links_external_order_no")
+  @@index([expiresAt], map: "idx_service_links_expires_at")
+  @@map("service_links")
+}
+
+model FlowSession {
+  id             BigInt            @id @default(autoincrement())
+  serviceLinkId  BigInt            @map("service_link_id")
+  serviceLink    ServiceLink       @relation(fields: [serviceLinkId], references: [id], onDelete: Cascade)
+  sessionKeyHash String            @unique @map("session_key_hash") @db.VarChar(255)
+  status         FlowSessionStatus @default(active)
+  startedAt      DateTime          @default(now()) @map("started_at") @db.Timestamptz(6)
+  lastSeenAt     DateTime?         @map("last_seen_at") @db.Timestamptz(6)
+  submittedAt    DateTime?         @map("submitted_at") @db.Timestamptz(6)
+  closedAt       DateTime?         @map("closed_at") @db.Timestamptz(6)
+  ipAddress      String?           @map("ip_address") @db.VarChar(64)
+  userAgent      String?           @map("user_agent")
+  createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  stepResponses  StepResponse[]
+  aiRuns         AiRun[]
+  reports        Report[]
+
+  @@map("flow_sessions")
+}
+
+model StepResponse {
+  id                   BigInt      @id @default(autoincrement())
+  serviceLinkId        BigInt      @map("service_link_id")
+  serviceLink          ServiceLink @relation(fields: [serviceLinkId], references: [id], onDelete: Cascade)
+  flowSessionId        BigInt      @map("flow_session_id")
+  flowSession          FlowSession @relation(fields: [flowSessionId], references: [id], onDelete: Cascade)
+  stepKey              String      @map("step_key") @db.VarChar(100)
+  stepIndex            Int         @map("step_index")
+  questionSnapshotJsonb Json       @map("question_snapshot_jsonb")
+  answerRawJsonb       Json?       @map("answer_raw_jsonb")
+  answerStructuredJsonb Json?      @map("answer_structured_jsonb")
+  aiFollowupJsonb      Json?       @map("ai_followup_jsonb")
+  isFinal              Boolean     @default(true) @map("is_final")
+  createdAt            DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([flowSessionId, stepKey])
+  @@index([serviceLinkId], map: "idx_step_responses_service_link_id")
+  @@index([stepKey], map: "idx_step_responses_step_key")
+  @@map("step_responses")
+}
+
+model AiRun {
+  id                 BigInt      @id @default(autoincrement())
+  serviceLinkId      BigInt      @map("service_link_id")
+  serviceLink        ServiceLink @relation(fields: [serviceLinkId], references: [id], onDelete: Cascade)
+  flowSessionId      BigInt?     @map("flow_session_id")
+  flowSession        FlowSession? @relation(fields: [flowSessionId], references: [id], onDelete: SetNull)
+  stage              String      @db.VarChar(50)
+  modelName          String      @map("model_name") @db.VarChar(100)
+  promptSnapshotJsonb Json       @map("prompt_snapshot_jsonb")
+  inputJsonb         Json        @map("input_jsonb")
+  outputJsonb        Json?       @map("output_jsonb")
+  usageJsonb         Json?       @map("usage_jsonb")
+  latencyMs          Int?        @map("latency_ms")
+  status             AiRunStatus @default(success)
+  errorMessage       String?     @map("error_message")
+  createdAt          DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([serviceLinkId], map: "idx_ai_runs_service_link_id")
+  @@index([stage], map: "idx_ai_runs_stage")
+  @@index([createdAt], map: "idx_ai_runs_created_at")
+  @@map("ai_runs")
+}
+
+model Report {
+  id            BigInt       @id @default(autoincrement())
+  serviceLinkId BigInt       @map("service_link_id")
+  serviceLink   ServiceLink  @relation(fields: [serviceLinkId], references: [id], onDelete: Cascade)
+  flowSessionId BigInt?      @map("flow_session_id")
+  flowSession   FlowSession? @relation(fields: [flowSessionId], references: [id], onDelete: SetNull)
+  status        ReportStatus @default(ready)
+  summaryMd     String?      @map("summary_md")
+  reportMd      String?      @map("report_md")
+  reportJsonb   Json?        @map("report_jsonb")
+  pdfObjectKey  String?      @map("pdf_object_key") @db.VarChar(500)
+  generatedAt   DateTime     @default(now()) @map("generated_at") @db.Timestamptz(6)
+  versionNo     Int          @default(1) @map("version_no")
+  createdAt     DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([serviceLinkId, versionNo])
+  @@map("reports")
+}
+
+model AuditLog {
+  id         BigInt   @id @default(autoincrement())
+  actorType  String   @map("actor_type") @db.VarChar(30)
+  actorId    BigInt?  @map("actor_id")
+  entityType String   @map("entity_type") @db.VarChar(50)
+  entityId   BigInt   @map("entity_id")
+  action     String   @db.VarChar(100)
+  beforeJsonb Json?   @map("before_jsonb")
+  afterJsonb Json?    @map("after_jsonb")
+  metaJsonb  Json?    @map("meta_jsonb")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([entityType, entityId], map: "idx_audit_logs_entity")
+  @@index([actorType, actorId], map: "idx_audit_logs_actor")
+  @@index([createdAt], map: "idx_audit_logs_created_at")
+  @@map("audit_logs")
+}
+
+model LinkEvent {
+  id             BigInt   @id @default(autoincrement())
+  serviceLinkId  BigInt   @map("service_link_id")
+  serviceLink    ServiceLink @relation(fields: [serviceLinkId], references: [id], onDelete: Cascade)
+  eventType      String   @map("event_type") @db.VarChar(50)
+  eventDataJsonb Json?    @map("event_data_jsonb")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("link_events")
+}
